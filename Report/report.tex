@@ -1,0 +1,198 @@
+\documentclass[10pt, a4paper]{article}
+\usepackage{ucas_matrix}
+\usepackage{tikz}
+
+\chapter{航天器姿态确定算法与模型报告}
+
+\section{引言}
+本报告详细阐述了航天器姿态运动学与动力学模型，以及基于扩展卡尔曼滤波（Extended Kalman Filter, EKF）的姿态确定方法。报告结合了四元数运动学方程和陀螺仪误差模型，推导了用于高精度姿态估计的乘性扩展卡尔曼滤波（Multiplicative EKF, MEKF）算法。
+
+\section{航天器姿态运动学与动力学模型}
+
+\subsection{坐标系定义}
+为了描述航天器的姿态，定义以下坐标系：
+\begin{itemize}
+    \item \textbf{惯性坐标系 (ECI, $i$-frame)}：原点位于地心，Z轴指向北天极，X轴指向春分点。
+    \item \textbf{本体坐标系 (Body, $b$-frame)}：固连于航天器本体，原点位于航天器质心，坐标轴沿航天器主轴方向。
+\end{itemize}
+
+\subsection{姿态表示与运动学模型}
+采用单位四元数 $q = [q_0, q_1, q_2, q_3]^T$ 描述本体坐标系相对于惯性坐标系的旋转。四元数满足归一化约束 $\|q\| = 1$。
+
+四元数的微分运动学方程由航天器本体角速度 $\omega = [\omega_x, \omega_y, \omega_z]^T$ 驱动：
+\begin{equation}
+    \dot{q} = \frac{1}{2} q \otimes \omega = \frac{1}{2} \Omega(\omega) q
+\end{equation}
+其中，符号 $\otimes$ 表示四元数乘法。$\omega$ 为纯虚四元数 $[0, \omega^T]^T$。$\Omega(\omega)$ 是对应的 $4 \times 4$ 偏希得矩阵：
+\begin{equation}
+    \Omega(\omega) = \begin{bmatrix}
+        0 & -\omega_x & -\omega_y & -\omega_z \\
+        \omega_x & 0 & \omega_z & -\omega_y \\
+        \omega_y & -\omega_z & 0 & \omega_x \\
+        \omega_z & \omega_y & -\omega_x & 0
+    \end{bmatrix}
+\end{equation}
+
+\subsection{姿态动力学模型}
+航天器的姿态动力学描述了角速度随时间的变化，由欧拉方程（Euler's Equations）给出：
+\begin{equation}
+    I \dot{\omega} + \omega \times (I \omega) = T_{ext} + T_{ctrl}
+\end{equation}
+其中：
+\begin{itemize}
+    \item $I$ 为航天器的转动惯量矩阵。
+    \item $\omega$ 为本体角速度。
+    \item $T_{ext}$ 为外部干扰力矩（如重力梯度、气动力矩等）。
+    \item $T_{ctrl}$ 为控制力矩（由飞轮或推力器产生）。
+\end{itemize}
+在姿态确定算法中，通常使用陀螺仪直接测量角速度 $\omega$，因此动力学方程主要用于仿真或过程噪声建模。
+
+\subsection{传感器测量模型}
+
+\subsubsection{陀螺仪模型}
+陀螺仪测量输出 $\omega_{meas}$ 包含真实角速度 $\omega$、零偏 $\beta$ 和测量噪声 $\eta_v$：
+\begin{equation}
+    \omega_{meas} = \omega + \beta + \eta_v
+\end{equation}
+其中 $\eta_v$ 为角度随机游走（Angle Random Walk, ARW）噪声，满足高斯白噪声特性：$E[\eta_v(t)\eta_v^T(\tau)] = \sigma_v^2 I \delta(t-\tau)$。
+
+陀螺仪零偏 $\beta$ 随时间缓慢漂移，通常建模为一阶马尔可夫过程或随机游走过程：
+\begin{equation}
+    \dot{\beta} = \eta_u
+\end{equation}
+其中 $\eta_u$ 为速率随机游走（Rate Random Walk, RRW）噪声，满足 $E[\eta_u(t)\eta_u^T(\tau)] = \sigma_u^2 I \delta(t-\tau)$。
+
+\subsubsection{星敏感器模型}
+星敏感器直接提供惯性系下的姿态四元数测量值 $q_{star}$。测量模型可以表示为真实姿态 $q_{true}$ 叠加一个小的测量噪声旋转 $\delta q_{meas}$：
+\begin{equation}
+    q_{star} = q_{true} \otimes \delta q_{meas}
+\end{equation}
+其中 $\delta q_{meas} \approx [1, \frac{1}{2}v_{noise}^T]^T$， $v_{noise}$ 为测量噪声角，服从零均值高斯分布 $R$。
+
+\section{姿态确定方法：乘性扩展卡尔曼滤波 (MEKF)}
+
+\subsection{算法概述}
+乘性扩展卡尔曼滤波（MEKF）利用误差状态四元数来避免协方差矩阵奇异性，并严格保持四元数的归一化约束。算法分为\textbf{状态}和\textbf{误差状态}两部分。
+
+\textbf{状态向量}定义为：
+\begin{itemize}
+    \item $q$: 全局姿态四元数（Nominal State）。
+    \item $\beta$: 陀螺仪零偏。
+\end{itemize}
+
+\textbf{误差状态向量} $\delta x$ (6维) 定义为：
+\begin{equation}
+    \delta x = \begin{bmatrix} \delta \theta \\ \delta \beta \end{bmatrix}
+\end{equation}
+其中 $\delta \theta$ 为本体坐标系下的姿态误差角，$ \delta \beta = \beta_{true} - \hat{\beta}$ 为零偏误差。
+
+姿态误差 $\delta q$ 定义为真实姿态与估计姿态之间的相对旋转（在本体坐标系下）：
+\begin{equation}
+    q_{true} = \hat{q} \otimes \delta q \approx \hat{q} \otimes \begin{bmatrix} 1 \\ \frac{1}{2}\delta \theta \end{bmatrix}
+\end{equation}
+
+\subsection{时间更新（预测步骤）}
+
+\subsubsection{1. 状态预测}
+利用陀螺仪测量 $\omega_{meas}$ 进行姿态积分。
+估计的角速度：
+\begin{equation}
+    \hat{\omega} = \omega_{meas} - \hat{\beta}_{k}
+\end{equation}
+四元数更新（离散化）：
+\begin{equation}
+    \hat{q}_{k+1}^- = \hat{q}_k^+ \otimes \Delta q(\hat{\omega} \Delta t)
+\end{equation}
+其中 $\Delta q$ 由罗德里格斯公式计算：
+\begin{equation}
+    \Delta q = \begin{bmatrix} \cos(\|\hat{\omega}\|\Delta t / 2) \\ \frac{\hat{\omega}}{\|\hat{\omega}\|} \sin(\|\hat{\omega}\|\Delta t / 2) \end{bmatrix}
+\end{equation}
+零偏预测假设为常值：
+\begin{equation}
+    \hat{\beta}_{k+1}^- = \hat{\beta}_k^+
+\end{equation}
+
+\subsubsection{2. 误差协方差预测}
+需要推导误差状态方程 $\delta \dot{x} = F \delta x + G w$。
+
+\textbf{姿态误差动力学}：
+对 $q_{true} = \hat{q} \otimes \delta q$ 求导并忽略高阶项，可得：
+\begin{equation}
+    \delta \dot{\theta} = -[\hat{\omega} \times] \delta \theta - \delta \beta - \eta_v
+\end{equation}
+其中 $[\hat{\omega} \times]$ 为反对称矩阵。
+
+\textbf{零偏误差动力学}：
+\begin{equation}
+    \delta \dot{\beta} = \eta_u
+\end{equation}
+
+连续时间系统矩阵 $F(t)$ 为：
+\begin{equation}
+    F = \begin{bmatrix}
+        -[\hat{\omega} \times] & -I_{3 \times 3} \\
+        0_{3 \times 3} & 0_{3 \times 3}
+    \end{bmatrix}
+\end{equation}
+
+离散化各状态转移矩阵 $\Phi_k \approx I + F \Delta t$。
+协方差预测方程：
+\begin{equation}
+    P_{k+1}^- = \Phi_k P_k^+ \Phi_k^T + Q_k
+\end{equation}
+其中 $Q_k$ 为离散过程噪声协方差矩阵。
+
+\subsection{量测更新（校正步骤）}
+
+\subsubsection{1. 测量残差计算}
+星敏感器测量 $q_{star}$ 与预测姿态 $\hat{q}^-$ 之间的偏差。
+定义测量残差四元数 $\delta q_{err}$ （注意顺序依赖于定义，本报告采用代码中的逻辑）：
+\begin{equation}
+    \delta q_{err} = q_{star} \otimes (\hat{q}^-)^{-1}
+\end{equation}
+提取矢量部分作为观测变量 $z$（小角度假设）：
+\begin{equation}
+    z = 2 \cdot \text{vec}(\delta q_{err}) \approx \delta \theta_{meas}
+\end{equation}
+
+\subsubsection{2. 观测矩阵与卡尔曼增益}
+由于 $z$ 直接对应姿态误差 $\delta \theta$，且不包含零偏信息，观测矩阵 $H$ 为：
+\begin{equation}
+    H = \begin{bmatrix} I_{3 \times 3} & 0_{3 \times 3} \end{bmatrix}
+\end{equation}
+
+计算卡尔曼增益 $K$：
+\begin{equation}
+    S = H P^- H^T + R
+\end{equation}
+\begin{equation}
+    K = P^- H^T S^{-1}
+\end{equation}
+
+\subsubsection{3. 状态与协方差更新}
+计算误差状态估计值：
+\begin{equation}
+    \delta \hat{x} = [\delta \hat{\theta}^T, \delta \hat{\beta}^T]^T = K z
+\end{equation}
+
+\textbf{协方差更新}（使用Joseph形式以保证数值稳定性）：
+\begin{equation}
+    P^+ = (I - KH) P^- (I - KH)^T + K R K^T
+\end{equation}
+
+\textbf{全状态注入（Reset）}：
+利用计算出的误差项修正名义状态。
+姿态修正：
+\begin{equation}
+    \hat{q}^+ = \hat{q}^- \otimes \delta q(\delta \hat{\theta}) \approx \hat{q}^- \otimes \begin{bmatrix} 1 \\ \frac{1}{2}\delta \hat{\theta} \end{bmatrix}
+\end{equation}
+修正后需对 $\hat{q}^+$ 进行归一化。
+
+零偏修正：
+\begin{equation}
+    \hat{\beta}^+ = \hat{\beta}^- + \delta \hat{\beta}
+\end{equation}
+
+\section{结论}
+上述 MEKF 算法结合了陀螺仪的高频动态特性和星敏感器的低频高精度特性，通过误差状态的高效迭代，能够实现航天器姿态的精确估计，并同时在线估计和补偿陀螺仪漂移。
+
