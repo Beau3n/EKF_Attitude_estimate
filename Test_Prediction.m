@@ -37,7 +37,7 @@ angle_error = zeros(1, N);
 for k = 1:N
     % 运行预测 Run Predict
     if k > 1
-        x_est = Predict(x_est, P_est, gyro_meas(:, k-1), dt, Q);
+        x_est = EKF_prediction(x_est, P_est, gyro_meas(:, k-1), dt, Q);
     end
     
     % 记录 Record

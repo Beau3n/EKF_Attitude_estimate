@@ -1,5 +1,5 @@
-function [x_pred, P_pred] = Predict(x_est, P_est, omega_meas, dt, Q)
-% PREDICT 执行 EKF 的时间更新 (预测) 步骤
+function [x_pred, P_pred] = EKF_prediction(x_est, P_est, omega_meas, dt, Q)
+% EKF_PREDICTION 执行 EKF 的时间更新 (预测) 步骤
 % Performs the time update (propagation) step of the EKF
 %
 % 算法基于 Lefferts, Markley, Shuster (1982)
